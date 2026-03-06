@@ -1,0 +1,23 @@
+{
+  "name": "twitter-intel-marketplace",
+  "owner": {
+    "name": "Husain",
+    "email": "husain@identity-labs.com"
+  },
+  "metadata": {
+    "description": "Twitter/X scraping and analytics tools",
+    "version": "1.0.0",
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "twitter-intel",
+      "source": "./plugins/twitter-intel",
+      "description": "Natural language Twitter/X analytics — scrape engagement metrics, followers, quote tweeters, and more. Outputs Excel files.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Husain"
+      }
+    }
+  ]
+}
