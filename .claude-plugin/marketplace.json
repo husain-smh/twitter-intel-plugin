@@ -11,9 +11,9 @@
   },
   "plugins": [
     {
-      "name": "twitter-intel",
-      "source": "./plugins/twitter-intel",
-      "description": "Natural language Twitter/X analytics — scrape engagement metrics, followers, quote tweeters, and more. Outputs Excel files.",
+      "name": "twitterapi",
+      "source": "./plugins/twitterapi",
+      "description": "Natural language Twitter/X analytics \u2014 scrape engagement metrics, followers, quote tweeters, and more. Outputs Excel files.",
       "version": "1.0.0",
       "author": {
         "name": "Husain"

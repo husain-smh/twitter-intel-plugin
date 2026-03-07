@@ -1,0 +1,18 @@
+{
+  "name": "twitterapi",
+  "description": "Natural language Twitter/X analytics \u2014 describe what you want in plain English, get Excel output. Engagement metrics, followers, quote tweeters, viral search, and more.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Husain",
+    "email": "husain@identity-labs.com"
+  },
+  "repository": "https://github.com/husain-smh/twitter-intel-plugin",
+  "keywords": [
+    "twitter",
+    "analytics",
+    "scraping",
+    "engagement",
+    "excel"
+  ],
+  "category": "productivity"
+}

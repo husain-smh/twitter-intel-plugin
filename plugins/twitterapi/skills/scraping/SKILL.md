@@ -1,5 +1,5 @@
 ---
-name: twitter-intel
+name: scraping
 description: Natural language Twitter/X analytics — describe what you want in plain English, get Excel output
 ---
 

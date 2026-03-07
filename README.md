@@ -1,4 +1,4 @@
-# Twitter Intel Plugin for Claude Code
+# TwitterAPI Scraping Plugin for Claude Code
 
 Natural language Twitter/X analytics. Describe what you want in plain English, get Excel output.
 
@@ -6,21 +6,16 @@ Natural language Twitter/X analytics. Describe what you want in plain English, g
 
 ```
 /plugin marketplace add husain-smh/twitter-intel-plugin
-/plugin install twitter-intel@twitter-intel-marketplace
+/plugin install twitterapi@twitter-intel-marketplace
 ```
 
 ## Usage
 
 ```
-/twitter-intel:twitter-intel get engagement metrics for @anthropic @openai
-```
-
-Or just describe what you want:
-
-```
-/twitter-intel:twitter-intel fetch followers of @cursor_ai
-/twitter-intel:twitter-intel find who quoted this tweet https://x.com/...
-/twitter-intel:twitter-intel search twitter for "AI agents" min_faves:1000 since:2026-01-01
+/twitterapi:scraping get engagement metrics for @anthropic @openai
+/twitterapi:scraping fetch followers of @cursor_ai
+/twitterapi:scraping find who quoted this tweet https://x.com/...
+/twitterapi:scraping search twitter for "AI agents" min_faves:1000 since:2026-01-01
 ```
 
 ## What it can do
