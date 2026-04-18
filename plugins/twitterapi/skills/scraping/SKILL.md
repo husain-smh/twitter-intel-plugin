@@ -269,7 +269,7 @@ You MUST split this into phases with a confirmation checkpoint between each.
 **Phase 0 — Get tweet metadata (near-free, 1 batched API call):**
 1. `GET /twitter/tweets?tweet_ids=<id1>,<id2>,...` → batch all tweet IDs in one call
 2. Read `quoteCount`, `retweetCount`, `replyCount`, `viewCount`, `likeCount` from the response
-3. Use `quoteCount` to estimate Phase 1 cost: `pages ≈ quoteCount / 20`, `cost ≈ pages / 1000 * $0.15`
+3. Use `quoteCount` to estimate Phase 1 cost. Method B runs **two passes** (`Latest` + `Top`), so: `pages ≈ 2 × quoteCount / 20`, `cost ≈ pages / 1000 * $0.15`. (When `QUOTES_ENDPOINT_STATUS = WORKING` and Method A is in use, drop the `2×`.)
 4. **STOP and show the full cost forecast:**
 
 ```
@@ -278,7 +278,7 @@ Tweet metadata (1 API call):
   [source2]: [quoteCount] quotes, [likeCount] likes, [viewCount] views
   ...
 
-Phase 1 (fetch all quotes): ~$X.XX ([total_quotes] quotes across [N] tweets, ~[pages] pages)
+Phase 1 (fetch all quotes — Latest + Top passes, merged): ~$X.XX ([total_quotes] quotes across [N] tweets, ~[pages] pages across both passes)
 Phase 2 (per-author metrics): ~$X.XX (estimated [total_quotes × 0.7] unique authors × ~10-15 calls each)
 Total estimated cost: ~$X.XX
 Account balance: $X.XX remaining
@@ -292,7 +292,7 @@ Proceed? (yes/no)
 
 > 🚦 **QUOTES_ENDPOINT_STATUS: BROKEN** *(last verified 2026-04-13)*
 >
-> twitterapi.io's `/twitter/tweet/quotes` endpoint is currently hard-capped at 40 results regardless of how many quotes a tweet actually has (confirmed by Kaito @ twitterapi.io support, 2026-04-13). It silently undercounts by 60-85%, so we use `advanced_search` as a fallback.
+> twitterapi.io's `/twitter/tweet/quotes` endpoint is currently hard-capped at 40 results regardless of how many quotes a tweet actually has (confirmed by Kaito @ twitterapi.io support, 2026-04-13). It silently undercounts by 60-85%, so we use `advanced_search` with **both** `queryType=Latest` and `queryType=Top` passes merged together as a fallback.
 >
 > **When this is fixed**, flip the status flag above to `WORKING` and the model will use **Method A** (faster, cheaper, simpler pagination). Until then, always use **Method B**.
 
@@ -303,15 +303,28 @@ Proceed? (yes/no)
 4. Stop when `has_next_page === false`, no `next_cursor`, or unique > `quoteCount × 1.5 + 50` (credit safety)
 
 **Method B — `advanced_search` fallback (USE WHEN STATUS = BROKEN):**
-1. `GET /twitter/tweet/advanced_search?query=quoted_tweet_id:<id>&queryType=Latest&cursor=<cursor>` → paginate to get all quote tweets
-2. Extract author data from each tweet in the `tweets[]` array (`author.userName`, `author.followers`, `author.isBlueVerified`, `author.profile_bio.description` — all already in the response)
-3. Deduplicate quoters using `deduplicateByKey()` (Template 12)
-4. **Pagination stop conditions** (stop when ANY is true):
-   - `has_next_page === false` or no `next_cursor`
-   - A page returned 0 new (non-duplicate) tweets — the API is cycling
-   - Unique fetched count > `quoteCount × 1.5 + 50` — credit-safety hard cap; if hit, warn the user and stop. (Expected slight overshoot is fine because `quoteCount` from the tweet endpoint can lag; the ×1.5 buffer absorbs that.)
 
-5. **STOP — show phase checkpoint with actual unique quoter count vs. expected `quoteCount`, and revised Phase 2 estimate.** Note: with Method B it's normal to recover ~85-95% of `quoteCount` (the rest are deleted/protected/blocked authors). If you're recovering <50%, flag it to the user — something is wrong.
+`advanced_search` exposes two `queryType` values — `Latest` (reverse-chronological) and `Top` (engagement-ranked). Each is a different slice of the index and neither is complete on its own, so we run **both passes** and merge. This measurably raises recovery vs. running a single pass.
+
+1. **Pass A — Latest:** `GET /twitter/tweet/advanced_search?query=quoted_tweet_id:<id>&queryType=Latest&cursor=<cursor>` → paginate to end.
+2. **Pass B — Top:** `GET /twitter/tweet/advanced_search?query=quoted_tweet_id:<id>&queryType=Top&cursor=<cursor>` → paginate to end.
+3. **Merge + dedupe** both passes by quote tweet `id` using `deduplicateByKey()` (Template 12). Keep the first occurrence's author/quote fields.
+4. Extract author data from each tweet in the merged list (`author.userName`, `author.followers`, `author.isBlueVerified`, `author.profile_bio.description` — all already in the response).
+5. **Pagination stop conditions (apply independently to each pass)** — stop that pass when ANY is true:
+   - `has_next_page === false` or no `next_cursor`
+   - A page returned 0 new (non-duplicate) tweets *within that pass* — the API is cycling
+   - That pass's unique count > `quoteCount × 1.5 + 50` — per-pass credit-safety cap
+6. **Combined credit-safety cap:** if merged unique count > `quoteCount × 1.8 + 50`, stop both passes and warn the user.
+
+7. **STOP — show phase checkpoint:**
+   - `quoteCount` reported by the tweet endpoint (ground truth upper bound)
+   - Unique quoters recovered by **Latest** pass
+   - Unique quoters recovered by **Top** pass
+   - Overlap between the two passes
+   - **Total unique quoters after merge** and `recovery % = unique / quoteCount`
+   - Revised Phase 2 estimate
+
+   Note: with Method B (both passes merged) it's normal to recover ~90-98% of `quoteCount` (the rest are deleted/protected/blocked authors). If you're recovering <50%, flag it to the user — something is wrong.
 
 **Phase 2 — Fetch per-author metrics:**
 1. Per unique quoter: `GET /twitter/user/last_tweets` → engagement metrics
@@ -323,7 +336,7 @@ Proceed? (yes/no)
 **Output columns:**
 | username | profile_url | user_id | followers | verified | bio | location | quote_tweet_id | quote_tweet_text | quote_tweet_views | quote_tweet_likes | quote_tweet_retweets | quote_tweet_at | tweets_used | newest_tweet_at | oldest_tweet_at | avg_views_25 | median_views_25 | avg_likes_25 | median_likes_25 | avg_retweets_25 | median_retweets_25 | avg_replies_25 | median_replies_25 | avg_quotes_25 | median_quotes_25 | pct_original | pct_retweet | pct_quote | error |
 
-**Cost:** Phase 0: ~$0.001 (1 batched call). Phase 1: depends on quoteCount (~20 quotes per page). Phase 2: ~10-15 `last_tweets` calls per unique quoter — the endpoint returns ~20 tweets per page including ALL types (originals, retweets, quotes, replies), so finding 25-30 originals means paginating past non-originals. Heavy retweeters (10-15% original) need 15-20+ pages. Example: tweet with 200 quotes, ~140 unique authors => ~$0.15 (Phase 1) + ~$2.80 (Phase 2) = ~$2.95 total.
+**Cost:** Phase 0: ~$0.001 (1 batched call). Phase 1: depends on quoteCount (~20 quotes per page) and runs **two passes** (Latest + Top), so roughly 2× the single-pass pagination cost. Phase 2: ~10-15 `last_tweets` calls per unique quoter — the endpoint returns ~20 tweets per page including ALL types (originals, retweets, quotes, replies), so finding 25-30 originals means paginating past non-originals. Heavy retweeters (10-15% original) need 15-20+ pages. Example: tweet with 200 quotes, ~160 unique authors after Latest+Top merge => ~$0.30 (Phase 1, both passes) + ~$3.20 (Phase 2) = ~$3.50 total.
 
 ---
 
@@ -343,10 +356,10 @@ Same as Quote Tweeters Analysis — use Phase 0 to get tweet metadata first.
 
 > 🚦 Same `QUOTES_ENDPOINT_STATUS` flag applies as in Quote Tweeters Analysis. Status currently **BROKEN** → use Method B (`advanced_search`). When fixed → use Method A (`/tweet/quotes`).
 
-1. Use the same Method A or Method B as Quote Tweeters Analysis Phase 1, depending on the status flag above
-2. Apply the same stop conditions (has_next_page false, 0 new in chunk, or unique > `quoteCount × 1.5 + 50`)
-3. Deduplicate quoters
-4. **STOP — show phase checkpoint with actual quoter count and revised Phase 2 estimate.**
+1. Use the same Method A or Method B as Quote Tweeters Analysis Phase 1, depending on the status flag above. For Method B, run **both** `queryType=Latest` and `queryType=Top` and merge/dedupe.
+2. Apply the same per-pass stop conditions (has_next_page false, 0 new in chunk, or unique > `quoteCount × 1.5 + 50`) and the combined cap (`merged unique > quoteCount × 1.8 + 50`).
+3. Deduplicate quoters across both passes by tweet `id`.
+4. **STOP — show phase checkpoint: `quoteCount`, Latest-pass unique, Top-pass unique, overlap, merged unique, recovery %, revised Phase 2 estimate.**
 
 **Phase 2 — Viral history search:**
 1. Per quoter: `GET /twitter/tweet/advanced_search?query=from:<username> min_faves:<N> since:<date>` → check for viral history
@@ -416,7 +429,7 @@ Quote tweets/Replies/Retweets:   $0.15 per 1,000 records
 | Profile Report (N accounts) | N × 5 calls / 1000 × $0.18 |
 | Fetch Followers (F followers) | F / 1000 × $0.15 |
 | Tweet Metrics (T tweets, U users) | (T + U×10) / 1000 × $0.15 (25 originals per author needs ~5-15 pages) |
-| Quote Tweeters (Q quotes, A authors) | Q/20 pages (Phase 1) + A×12 calls (Phase 2) / 1000 × $0.15 |
+| Quote Tweeters (Q quotes, A authors) | 2×Q/20 pages (Phase 1, Latest+Top) + A×12 calls (Phase 2) / 1000 × $0.15 |
 | Advanced Search (P pages) | P / 50 × $0.15 |
 | QRT Viral (Q quoters) | (60 pages + Q×5 pages) / 50 × $0.15 |
 
@@ -589,7 +602,7 @@ GET /twitter/tweet/quotes?tweetId=<id>&cursor=<cursor>
 Response: { tweets: [{ id, text, viewCount, likeCount, retweetCount, replyCount, quoteCount, bookmarkCount, createdAt, author: {...} }], has_next_page, next_cursor }
 Cost: $0.15 per 1,000
 
-⚠️ STATUS: BROKEN as of 2026-04-13 — hard-capped at 40 results regardless of actual quote count (confirmed by twitterapi.io support). Use advanced_search with `query=quoted_tweet_id:<id>` instead until fixed. See "QUOTES_ENDPOINT_STATUS" flag in Workflow 7 (Quote Tweeters Analysis) — flip to WORKING when twitterapi.io fixes it.
+⚠️ STATUS: BROKEN as of 2026-04-13 — hard-capped at 40 results regardless of actual quote count (confirmed by twitterapi.io support). Use advanced_search with `query=quoted_tweet_id:<id>` instead until fixed, and run **both** `queryType=Latest` and `queryType=Top` passes merged+deduped (each pass is a different slice of the index; merging raises recovery). See "QUOTES_ENDPOINT_STATUS" flag in Workflow 7 (Quote Tweeters Analysis) — flip to WORKING when twitterapi.io fixes it.
 
 CRITICAL (when working): May keep returning has_next_page=true with valid cursors even after all real quotes are exhausted, causing pagination to cycle through the same results. You MUST track seen tweet IDs and stop pagination when an entire page contains only already-seen IDs.
 ```
